@@ -6,7 +6,7 @@ const bitcoin = require('bitcoinjs-lib');
 const HDKey = require('hdkey');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
-
+const lmdb = require('lmdb');
 class WalletService extends EventEmitter {
   static DEFAULT_BIP32_PATH = "m/44'/0'/0'";
 
@@ -104,45 +104,77 @@ class WalletService extends EventEmitter {
     }
   }
 
-  async deriveSidechainStarter(sidechainSlot) {
-    try {
-      const masterWallet = await this.loadWallet();
-      if (!masterWallet?.xprv) {
-        throw new Error('Master starter not found or invalid');
-      }
 
-      // Derive sidechain key
-      const hdkey = HDKey.fromExtendedKey(masterWallet.xprv);
-      const sidechainPath = `m/44'/0'/${sidechainSlot}'`;
-      const sidechainKey = hdkey.derive(sidechainPath);
-      
-      // Generate entropy from private key
-      const privateKeyBytes = sidechainKey.privateKey;
-      const hashedKey = crypto.createHash('sha256').update(privateKeyBytes).digest();
-      const entropy = hashedKey.slice(0, 16);
 
-      // Generate new mnemonic from entropy
-      const mnemonic = bip39.entropyToMnemonic(entropy);
-      const seed = await bip39.mnemonicToSeed(mnemonic);
-      
-      // Create new HD wallet for sidechain
-      const sidechainHDKey = HDKey.fromMasterSeed(seed);
-      
-      const sidechainStarter = {
-        mnemonic,
-        seed_hex: seed.toString('hex'),
-        xprv: sidechainHDKey.privateExtendedKey,
-        parent_xprv: masterWallet.xprv,
-        derivation_path: sidechainPath
-      };
+// Add this to the existing WalletService class
+async initializeLMDBEnvironment(chainId) {
+  const chain = config.chains.find(c => c.id === chainId);
+  if (!chain) throw new Error('Chain not found');
 
-      await this.saveSidechainStarter(sidechainSlot, sidechainStarter);
-      return sidechainStarter;
-    } catch (error) {
-      console.error('Error deriving sidechain starter:', error);
-      throw error;
+  const dbPath = path.join(
+    app.getPath('home'),
+    chain.directories.base[process.platform],
+    'data/thunder'
+  );
+
+  // Ensure directory exists
+  await fs.ensureDir(dbPath);
+
+  // Initialize LMDB environment
+  const env = lmdb.open({
+    path: dbPath,
+    maxDbs: 1,
+    mapSize: 10 * 1024 * 1024 // 10MB
+  });
+
+  return env;
+}
+
+// Replace the existing deriveSidechainStarter with this complete version
+async deriveSidechainStarter(sidechainSlot) {
+  try {
+    const masterWallet = await this.loadWallet();
+    if (!masterWallet?.xprv) {
+      throw new Error('Master starter not found or invalid');
     }
+
+    // Derive sidechain key
+    const hdkey = HDKey.fromExtendedKey(masterWallet.xprv);
+    const sidechainPath = `m/44'/0'/${sidechainSlot}'`;
+    const sidechainKey = hdkey.derive(sidechainPath);
+    
+    // Generate entropy from private key
+    const privateKeyBytes = sidechainKey.privateKey;
+    const hashedKey = crypto.createHash('sha256').update(privateKeyBytes).digest();
+    const entropy = hashedKey.slice(0, 16);
+
+    // Generate new mnemonic from entropy
+    const mnemonic = bip39.entropyToMnemonic(entropy);
+    const seed = await bip39.mnemonicToSeed(mnemonic);
+    
+    // Create new HD wallet for sidechain
+    const sidechainHDKey = HDKey.fromMasterSeed(seed);
+    
+    const sidechainStarter = {
+      mnemonic,
+      seed_hex: seed.toString('hex'),
+      xprv: sidechainHDKey.privateExtendedKey,
+      parent_xprv: masterWallet.xprv,
+      derivation_path: sidechainPath
+    };
+
+    // Initialize LMDB for Thunder (slot 9)
+    if (sidechainSlot === 9) {
+      await this.initializeLMDBEnvironment('thunder');
+    }
+
+    await this.saveSidechainStarter(sidechainSlot, sidechainStarter);
+    return sidechainStarter;
+  } catch (error) {
+    console.error('Error deriving sidechain starter:', error);
+    throw error;
   }
+}
 
   async saveWallet(walletData) {
     try {

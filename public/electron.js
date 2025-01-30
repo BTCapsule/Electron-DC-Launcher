@@ -37,7 +37,7 @@ function createWindow() {
   if (mainWindow === null) {
     mainWindow = new BrowserWindow({
       width: 1024,
-      height: 768,
+      height: 768 + 30,
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -149,37 +149,38 @@ function setupIPCHandlers() {
     }
   });
 
-  ipcMain.handle("start-chain", async (event, chainId) => {
-    try {
-      const chain = config.chains.find(c => c.id === chainId);
-      let args = [];
+ipcMain.handle("start-chain", async (event, chainId) => {
+  try {
+    const chain = config.chains.find(c => c.id === chainId);
+    let args = [];
+    
+    if (chain && chain.chain_layer === 2 && chain.slot === 9) { // Thunder
+      const walletPath = path.join(
+        app.getPath("home"),
+        chain.directories.base[process.platform],
+        "wallet.mdb"
+      );
       
-      // Only for Thunder and Bitnames (layer 2 chains)
-      if (chain && chain.chain_layer === 2 && chain.slot) {
-        const walletPath = path.join(
-          app.getPath("home"),
-          chain.directories.base[process.platform],
-          "wallet.mdb"
-        );
+      const walletExists = await fs.pathExists(walletPath);
+      
+      if (!walletExists) {
+        // Initialize LMDB environment first
+        await walletManager.walletService.initializeLMDBEnvironment(chainId);
         
-        const walletExists = await fs.pathExists(walletPath);
-        console.log(`[${chainId}] Checking wallet.mdb at: ${walletPath}`);
-        
-        if (!walletExists) {
-          const mnemonicPath = walletManager.walletService.getMnemonicPath(chain.slot);
-          args = ['--mnemonic-seed-phrase-path', mnemonicPath];
-          console.log(`[${chainId}] First run detected - passing mnemonic arg: ${mnemonicPath}`);
-        } else {
-          console.log(`[${chainId}] wallet.mdb exists - skipping mnemonic arg`);
-        }
+        const mnemonicPath = walletManager.walletService.getMnemonicPath(chain.slot);
+        args = ['--mnemonic-seed-phrase-path', mnemonicPath];
       }
-      
-      return await chainManager.startChain(chainId, args);
-    } catch (error) {
-      console.error("Failed to start chain:", error);
-      return { success: false, error: error.message };
     }
-  });
+    
+    return await chainManager.startChain(chainId, args);
+  } catch (error) {
+    console.error("Failed to start chain:", error);
+    return { success: false, error: error.message };
+  }
+});
+  
+  
+  
 
   ipcMain.handle("stop-chain", async (event, chainId) => {
     try {

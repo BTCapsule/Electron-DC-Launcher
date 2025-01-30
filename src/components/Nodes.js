@@ -1,397 +1,6 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
 import Card from './Card';
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 import DownloadModal from './DownloadModal';
 import WalletMessageModal from './WalletMessageModal';
@@ -399,52 +8,71 @@ import { updateDownloads, updateIBDStatus } from '../store/downloadSlice';
 import { showDownloadModal } from '../store/downloadModalSlice';
 
 function Nodes() {
+  const L1_CHAINS = ['bitcoin', 'enforcer', 'bitwindow'];
   const [chains, setChains] = useState([]);
   const [walletMessage, setWalletMessage] = useState(null);
   const [bitcoinSync, setBitcoinSync] = useState(null);
   const [runningNodes, setRunningNodes] = useState([]);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [buttonText, setButtonText] = useState('Download All');
+  const [isSequentialDownloading, setIsSequentialDownloading] = useState(false);
   const dispatch = useDispatch();
+  
+ const checkL1ChainsStatus = useCallback(() => {
+  
+  const allPresent = L1_CHAINS.every(chainId => {
+    const chain = chains.find(c => c.id === chainId);
+    return chain && chain.status !== 'not_downloaded';
+  });
 
-  const fetchChains = useCallback(async () => {
-    try {
-      const config = await window.electronAPI.getConfig();
-      const dependencyData = await import('../CardData.json');
-      
-      const chainsWithStatus = await Promise.all(
-        config.chains
-          .filter(chain => chain.enabled)
-          .map(async chain => {
-            const dependencyInfo = dependencyData.default.find(d => d.id === chain.id);
-            return {
-              ...chain,
-              dependencies: dependencyInfo?.dependencies || [],
-              status: await window.electronAPI.getChainStatus(chain.id),
-              progress: 0,
-            };
-          })
-      );
-      setChains(chainsWithStatus);
-      
-      // Initialize running nodes based on initial status
-      const initialRunning = chainsWithStatus
-        .filter(chain => chain.status === 'running' || chain.status === 'ready')
-        .map(chain => chain.id);
-      setRunningNodes(initialRunning);
-      setIsInitialized(true);
-    } catch (error) {
-      console.error('Failed to fetch chain config:', error);
-      setIsInitialized(true); // Still set initialized even on error to prevent infinite loading
-    }
-  }, []);
+  setButtonText(allPresent ? 'Boot Layer 1' : 'Download All');
+}, [chains]);
 
-  const downloadsUpdateHandler = useCallback(
+const fetchChains = useCallback(async () => {
+  try {
+    const config = await window.electronAPI.getConfig();
+    const dependencyData = await import('../CardData.json');
+    
+    const chainsWithStatus = await Promise.all(
+      config.chains
+        .filter(chain => chain.enabled)
+        .map(async chain => {
+          const dependencyInfo = dependencyData.default.find(d => d.id === chain.id);
+          return {
+            ...chain,
+            dependencies: dependencyInfo?.dependencies || [],
+            status: await window.electronAPI.getChainStatus(chain.id),
+            progress: 0,
+          };
+        })
+    );
+    
+    setChains(chainsWithStatus);
+    checkL1ChainsStatus(); // Check status after setting chains
+  } catch (error) {
+    console.error('Failed to fetch chain config:', error);
+  }
+}, [checkL1ChainsStatus]);
+
+const downloadsUpdateHandler = useCallback(
     downloads => {
-      console.log('Received downloads update:', downloads);
-      dispatch(updateDownloads(downloads));
+      if (!Array.isArray(downloads)) {
+        console.warn('Received invalid downloads data:', downloads);
+        return;
+      }
+      
+      // Ensure we only pass serializable data
+      const sanitizedDownloads = downloads.map(download => ({
+        chainId: download.chainId,
+        status: download.status,
+        progress: download.progress
+      }));
+
+      console.log('Received downloads update:', sanitizedDownloads);
+      dispatch(updateDownloads(sanitizedDownloads));
       setChains(prevChains =>
         prevChains.map(chain => {
-          const download = downloads.find(d => d.chainId === chain.id);
+          const download = sanitizedDownloads.find(d => d.chainId === chain.id);
           return download
             ? { ...chain, status: download.status, progress: download.progress }
             : chain;
@@ -454,20 +82,32 @@ function Nodes() {
     [dispatch]
   );
 
-  const chainStatusUpdateHandler = useCallback(({ chainId, status }) => {
-    setChains(prevChains =>
-      prevChains.map(chain =>
-        chain.id === chainId ? { ...chain, status } : chain
-      )
+const chainStatusUpdateHandler = useCallback(({ chainId, status }) => {
+  console.log(`Chain status update - ${chainId}: ${status}`);
+  
+  setChains(prevChains => {
+    const newChains = prevChains.map(chain =>
+      chain.id === chainId ? { ...chain, status } : chain
     );
-    
-    // Update running nodes list
-    if (status === 'running' || status === 'ready') {
-      setRunningNodes(prev => [...new Set([...prev, chainId])]);
-    } else if (status === 'stopped' || status === 'not_downloaded') {
-      setRunningNodes(prev => prev.filter(id => id !== chainId));
-    }
-  }, []);
+    console.log('Updated chains:', newChains);
+    return newChains;
+  });
+  
+  // Update running nodes list with proper state management
+  if (status === 'running' || status === 'ready') {
+    setRunningNodes(prev => {
+      const newRunningNodes = Array.from(new Set([...prev, chainId]));
+      console.log('Added to running nodes:', chainId, newRunningNodes);
+      return newRunningNodes;
+    });
+  } else {
+    setRunningNodes(prev => {
+      const newRunningNodes = prev.filter(id => id !== chainId);
+      console.log('Removed from running nodes:', chainId, newRunningNodes);
+      return newRunningNodes;
+    });
+  }
+}, []);
 
   const downloadCompleteHandler = useCallback(({ chainId }) => {
     setChains(prevChains =>
@@ -479,43 +119,52 @@ function Nodes() {
     );
   }, []);
 
-  useEffect(() => {
-    fetchChains();
+useEffect(() => {
+  const updateButtonText = () => {
+    // Check if any L1 chain is not downloaded
+    const anyNotDownloaded = L1_CHAINS.some(chainId => {
+      const chain = chains.find(c => c.id === chainId);
+      return chain && chain.status === 'not_downloaded';
+    });
 
-    const unsubscribeDownloadsUpdate = window.electronAPI.onDownloadsUpdate(
-      downloadsUpdateHandler
-    );
-    const unsubscribeStatus = window.electronAPI.onChainStatusUpdate(
-      chainStatusUpdateHandler
-    );
-    const unsubscribeDownloadComplete = window.electronAPI.onDownloadComplete(
-      downloadCompleteHandler
-    );
-    const unsubscribeBitcoinSync = window.electronAPI.onBitcoinSyncStatus(
-      (status) => {
-        setBitcoinSync(status);
-        // Update IBD status in downloads slice
-        dispatch(updateIBDStatus({ chainId: 'bitcoin', status }));
-      }
-    );
+    // Check if all L1 chains are running
+    const allRunning = L1_CHAINS.every(chainId => runningNodes.includes(chainId));
 
-    window.electronAPI.getDownloads().then(downloadsUpdateHandler);
+    // Determine new button text
+    let newText;
+    if (isSequentialDownloading) {
+      newText = 'Processing...';
+    } else if (anyNotDownloaded) {
+      newText = 'Download All';
+    } else if (allRunning) {
+      newText = 'Stop Layer 1';
+    } else {
+      newText = 'Boot Layer 1';
+    }
 
-    return () => {
-      if (typeof unsubscribeDownloadsUpdate === 'function')
-        unsubscribeDownloadsUpdate();
-      if (typeof unsubscribeStatus === 'function') unsubscribeStatus();
-      if (typeof unsubscribeDownloadComplete === 'function')
-        unsubscribeDownloadComplete();
-      if (typeof unsubscribeBitcoinSync === 'function')
-        unsubscribeBitcoinSync();
-    };
-  }, [
-    fetchChains,
-    downloadsUpdateHandler,
-    chainStatusUpdateHandler,
-    downloadCompleteHandler,
-  ]);
+    // Only update if text actually changed
+    if (buttonText !== newText) {
+      setButtonText(newText);
+    }
+  };
+
+  // Update immediately
+  updateButtonText();
+
+}, [chains, runningNodes, isSequentialDownloading, buttonText]);
+
+
+useEffect(() => {
+  fetchChains(); // Initial fetch to check binary presence
+  
+  const unsubscribeStatus = window.electronAPI.onChainStatusUpdate(
+    chainStatusUpdateHandler
+  );
+
+  return () => {
+    if (typeof unsubscribeStatus === 'function') unsubscribeStatus();
+  };
+}, [fetchChains, chainStatusUpdateHandler]);
 
   const handleOpenWalletDir = useCallback(async chainId => {
     try {
@@ -562,16 +211,20 @@ function Nodes() {
     [dispatch]
   );
 
-  const handleStartChain = useCallback(async chainId => {
-    try {
-      // Find the chain and check its dependencies
-      const chain = chains.find(c => c.id === chainId);
-      if (!chain) {
-        console.error(`Chain ${chainId} not found`);
-        return;
-      }
+const handleStartChain = useCallback(async chainId => {
+  try {
+    // Find the chain
+    const chain = chains.find(c => c.id === chainId);
+    if (!chain) {
+      console.error(`Chain ${chainId} not found`);
+      return;
+    }
 
-      // Check if all dependencies are running
+    console.log(`Attempting to start ${chainId}`);
+    
+    // Skip dependency checks for enforcer and bitwindow
+    if (chainId !== 'enforcer' && chainId !== 'bitwindow') {
+      // Check dependencies only for other chains
       if (chain.dependencies && chain.dependencies.length > 0) {
         const missingDeps = chain.dependencies.filter(dep => !runningNodes.includes(dep));
         if (missingDeps.length > 0) {
@@ -579,17 +232,22 @@ function Nodes() {
           return;
         }
       }
-
-      await window.electronAPI.startChain(chainId);
-      setChains(prevChains =>
-        prevChains.map(chain =>
-          chain.id === chainId ? { ...chain, status: 'running' } : chain
-        )
-      );
-    } catch (error) {
-      console.error(`Failed to start chain ${chainId}:`, error);
     }
-  }, [chains, runningNodes]);
+
+    console.log(`Starting ${chainId} via electronAPI...`);
+    await window.electronAPI.startChain(chainId);
+    console.log(`${chainId} started successfully`);
+
+    setChains(prevChains =>
+      prevChains.map(chain =>
+        chain.id === chainId ? { ...chain, status: 'running' } : chain
+      )
+    );
+  } catch (error) {
+    console.error(`Failed to start chain ${chainId}:`, error);
+    console.error('Full error:', error);
+  }
+}, [chains]);
 
   const handleStopChain = useCallback(async chainId => {
     try {
@@ -625,18 +283,22 @@ function Nodes() {
     [chains, handleStopChain]
   );
 
-  const waitForChainRunning = useCallback((chainId) => {
-    return new Promise((resolve) => {
-      const checkRunning = () => {
-        if (runningNodes.includes(chainId)) {
-          resolve();
-        } else {
-          setTimeout(checkRunning, 500); // Check every 500ms
+const waitForChainRunning = useCallback((chainId) => {
+  return new Promise((resolve) => {
+    const checkRunning = async () => {
+      if (runningNodes.includes(chainId)) {
+        // Add additional delay for Bitcoin to ensure it's fully ready
+        if (chainId === 'bitcoin') {
+          await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
         }
-      };
-      checkRunning();
-    });
-  }, [runningNodes]);
+        resolve();
+      } else {
+        setTimeout(checkRunning, 500); // Check every 500ms
+      }
+    };
+    checkRunning();
+  });
+}, [runningNodes]);
 
   const isBitcoinStopped = useCallback(() => {
     const bitcoinChain = chains.find(c => c.id === 'bitcoin');
@@ -645,8 +307,6 @@ function Nodes() {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isStoppingSequence, setIsStoppingSequence] = useState(false);
-
-  const L1_CHAINS = ['bitcoin', 'enforcer', 'bitwindow'];
 
   const areAllChainsRunning = useCallback(() => {
     return L1_CHAINS.every(chain =>
@@ -739,6 +399,259 @@ function Nodes() {
     }
   }, [runningNodes]);
 
+
+ 
+ 
+
+// Function to handle downloading L1 chains
+const handleL1Download = useCallback(async () => {
+  if (isSequentialDownloading) return;
+  setIsSequentialDownloading(true);
+
+  try {
+    // Download each chain sequentially
+    for (const chainId of L1_CHAINS) {
+      const chain = chains.find(c => c.id === chainId);
+      if (chain && chain.status === 'not_downloaded') {
+        await handleDownloadChain(chainId);
+        // Wait for download to complete
+        await new Promise(resolve => {
+          const checkStatus = async () => {
+            const status = await window.electronAPI.getChainStatus(chainId);
+            if (status === 'downloaded' || status === 'stopped') {
+              resolve();
+            } else {
+              setTimeout(checkStatus, 1000);
+            }
+          };
+          checkStatus();
+        });
+      }
+    }
+
+    // After all downloads complete, refresh chain states
+    await fetchChains();
+    
+    // Update local state for each chain
+    setChains(prevChains =>
+      prevChains.map(chain => {
+        if (L1_CHAINS.includes(chain.id)) {
+          return { ...chain, status: 'downloaded' };
+        }
+        return chain;
+      })
+    );
+
+    setButtonText('Boot Layer 1');
+  } catch (error) {
+    console.error('Download operation failed:', error);
+  } finally {
+    setIsSequentialDownloading(false);
+  }
+}, [chains, handleDownloadChain, fetchChains, L1_CHAINS, isSequentialDownloading]);
+
+// Function to handle starting L1 chains
+const handleL1Boot = useCallback(async () => {
+  if (isSequentialDownloading) return;
+  setIsSequentialDownloading(true);
+
+  try {
+    console.log('Starting boot sequence...');
+    
+    // Start bitcoin first
+    console.log('Starting Bitcoin...');
+    await handleStartChain('bitcoin');
+    
+    // Wait 2 seconds before starting enforcer and bitwindow
+    console.log('Waiting 2 seconds before starting Enforcer and BitWindow...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Start enforcer
+    console.log('Starting Enforcer...');
+    await handleStartChain('enforcer');
+    
+    // Start bitwindow
+    console.log('Starting BitWindow...');
+    await handleStartChain('bitwindow');
+
+    setButtonText('Stop Layer 1');
+  } catch (error) {
+    console.error('Boot sequence failed:', error);
+    setButtonText('Boot Layer 1');
+  } finally {
+    setIsSequentialDownloading(false);
+  }
+}, [handleStartChain, isSequentialDownloading]);
+    
+
+
+// Main handler that delegates to the appropriate function
+const handleSequentialDownload = useCallback(async () => {
+  if (isSequentialDownloading) return;
+  setIsSequentialDownloading(true);
+
+  try {
+    if (buttonText === 'Download All') {
+      await handleL1Download();
+    } 
+    else if (buttonText === 'Boot Layer 1') {
+      // Start chains in sequence
+      console.log('Starting boot sequence...');
+      
+      // Start Bitcoin first
+      if (!runningNodes.includes('bitcoin')) {
+        console.log('Starting Bitcoin...');
+        await handleStartChain('bitcoin');
+        // Wait for Bitcoin to be fully running
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      
+      // Start Enforcer after Bitcoin
+      if (!runningNodes.includes('enforcer')) {
+        console.log('Starting Enforcer...');
+        await handleStartChain('enforcer');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      // Start BitWindow last
+      if (!runningNodes.includes('bitwindow')) {
+        console.log('Starting BitWindow...');
+        await handleStartChain('bitwindow');
+      }
+    } 
+    else if (buttonText === 'Stop Layer 1') {
+      console.log('Starting stop sequence...');
+      
+      // Stop chains in reverse order
+      const chainsToStop = ['bitwindow', 'enforcer', 'bitcoin'];
+      
+      for (const chainId of chainsToStop) {
+        if (runningNodes.includes(chainId)) {
+          console.log(`Stopping ${chainId}...`);
+          
+          try {
+            // Send stop command
+            await window.electronAPI.stopChain(chainId);
+            
+            // Wait for the chain to actually stop
+            let attempts = 0;
+            while (attempts < 30 && runningNodes.includes(chainId)) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              attempts++;
+              
+              // Check chain status
+              const status = await window.electronAPI.getChainStatus(chainId);
+              if (status === 'stopped') {
+                console.log(`${chainId} stopped successfully`);
+                break;
+              }
+            }
+            
+            // Force update the chain status in local state
+            setChains(prevChains =>
+              prevChains.map(chain =>
+                chain.id === chainId ? { ...chain, status: 'stopped' } : chain
+              )
+            );
+            
+            // Force update running nodes
+            setRunningNodes(prev => prev.filter(id => id !== chainId));
+            
+            // Additional delay between stopping chains
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } catch (error) {
+            console.error(`Error stopping ${chainId}:`, error);
+          }
+        }
+      }
+      
+      // Final state check
+      await fetchChains();
+    }
+  } catch (error) {
+    console.error('Sequential operation failed:', error);
+  } finally {
+    setIsSequentialDownloading(false);
+  }
+}, [
+  buttonText,
+  isSequentialDownloading,
+  handleL1Download,
+  handleStartChain,
+  runningNodes,
+  fetchChains
+]);
+
+useEffect(() => {
+  const initializeAndSubscribe = async () => {
+    try {
+      // Initial fetch of chains
+      const config = await window.electronAPI.getConfig();
+      const dependencyData = await import('../CardData.json');
+      
+      const chainsWithStatus = await Promise.all(
+        config.chains
+          .filter(chain => chain.enabled)
+          .map(async chain => {
+            const dependencyInfo = dependencyData.default.find(d => d.id === chain.id);
+            return {
+              ...chain,
+              dependencies: dependencyInfo?.dependencies || [],
+              status: await window.electronAPI.getChainStatus(chain.id),
+              progress: 0,
+            };
+          })
+      );
+      
+      setChains(chainsWithStatus);
+      
+      // Set initial running nodes
+      const initialRunning = chainsWithStatus
+        .filter(chain => chain.status === 'running' || chain.status === 'ready')
+        .map(chain => chain.id);
+      setRunningNodes(initialRunning);
+      setIsInitialized(true);
+
+      // Set up event listeners with error handling
+      const unsubscribeDownloadsUpdate = window.electronAPI.onDownloadsUpdate(
+        (downloads) => {
+          try {
+            downloadsUpdateHandler(downloads);
+          } catch (error) {
+            console.error('Error handling downloads update:', error);
+          }
+        }
+      );
+      
+      // Get initial downloads state with error handling
+      try {
+        const initialDownloads = await window.electronAPI.getDownloads();
+        downloadsUpdateHandler(initialDownloads);
+      } catch (error) {
+        console.error('Error getting initial downloads:', error);
+      }
+
+      // Return cleanup function
+      return () => {
+        if (typeof unsubscribeDownloadsUpdate === 'function') {
+          unsubscribeDownloadsUpdate();
+        }
+      };
+    } catch (error) {
+      console.error('Failed to initialize:', error);
+      setIsInitialized(true);
+    }
+  };
+
+  // Execute initialization
+  const cleanup = initializeAndSubscribe();
+  return () => {
+    cleanup.then(cleanupFn => {
+      if (cleanupFn) cleanupFn();
+    });
+  };
+}, [downloadsUpdateHandler]);
+
   const handleQuickStartStop = useCallback(async () => {
     try {
       if (!areAllL1ChainsDownloaded()) {
@@ -789,9 +702,37 @@ function Nodes() {
                 : 'Safe Stop'}
         </button>
       )} */}
+      <div className={"chainSectionsContainer"}>
       <div className="chain-list">
         <div className="chain-section">
+        <div className="chain-heading-row">
           <h2 className="chain-heading">Layer 1</h2>
+<button 
+  onClick={handleSequentialDownload}
+  disabled={isSequentialDownloading}
+  className="layer1-action-button"
+  style={{
+    padding: '8px 16px',
+    backgroundColor: isSequentialDownloading 
+      ? '#FFA726'  // Orange for processing
+      : buttonText === 'Download All'
+        ? '#2196F3'  // Blue for download
+        : buttonText === 'Stop Layer 1'
+          ? '#f44336'  // Red for stop
+          : '#4CAF50', // Green for start/boot
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: isSequentialDownloading ? 'wait' : 'pointer',
+    opacity: isSequentialDownloading ? 0.8 : 1,
+    transition: 'all 0.3s ease',
+    margin: '10px 0',
+    fontWeight: 'bold'
+  }}
+>
+  {isSequentialDownloading ? 'Processing...' : buttonText}
+</button>
+  </div>
           <div className="l1-chains">
             {chains
               .filter(chain => chain.chain_type === 0)
@@ -831,6 +772,8 @@ function Nodes() {
           </div>
         </div>
       </div>
+      </div>
+      
       <DownloadModal />
       {walletMessage && (
         <WalletMessageModal
